@@ -408,7 +408,7 @@ def fetch_market_snapshot() -> pd.DataFrame:
         "Nifty 50": "^NSEI",
         "S&P 500": "^GSPC",
         "Nasdaq 100": "^NDX",
-        "DXY": "DXY",
+        "DXY": "DX-Y.NYB",
         "Gold": "GC=F",
         "Brent Crude": "BZ=F",
         "US 10Y": "^TNX",
