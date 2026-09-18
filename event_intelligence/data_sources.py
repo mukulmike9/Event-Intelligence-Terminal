@@ -407,7 +407,7 @@ def fetch_market_snapshot() -> pd.DataFrame:
     tickers = {
         "Nifty 50": "^NSEI",
         "S&P 500": "^GSPC",
-        "Nasdaq": "^IXIC",
+        "Nasdaq 100": "^NDX",
         "DXY": "DX-Y.NYB",
         "Gold": "GC=F",
         "Brent Crude": "BZ=F",
