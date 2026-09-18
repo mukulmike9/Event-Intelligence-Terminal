@@ -13,7 +13,7 @@ import yfinance as yf
 
 
 HEADERS = {
-    "User-Agent": "EventIntelligenceTerminal/1.0 (+https://streamlit.io)"
+    "User-Agent": "EventIntelligence/1.0 (+https://streamlit.io)"
 }
 
 CB_WATCH_URL = "https://centralbank.watch/tools/economic-calendar/"
