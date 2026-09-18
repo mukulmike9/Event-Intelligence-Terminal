@@ -65,7 +65,7 @@ git push -u origin main
 ```
 
 ## Streamlit Community Cloud
-
+**Deployment Link :** https://event-intelligence-terminal-001.streamlit.app/
 1. Push the repository to GitHub.
 2. Open Streamlit Community Cloud.
 3. Connect your GitHub account.
