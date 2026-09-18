@@ -94,3 +94,10 @@ Recommended next steps:
 5. Add historical market reaction calculations.
 6. Add authentication if the dashboard becomes internal/B2B.
 7. Add monitoring for failed source connectors.
+
+
+**Preview -**
+
+<img width="1361" height="632" alt="image" src="https://github.com/user-attachments/assets/a2032a8b-fd01-40ea-acac-f93a83f99ba3" />
+
+<img width="1357" height="627" alt="image" src="https://github.com/user-attachments/assets/0ece5020-633a-426c-be29-0dbf74212bcb" />
