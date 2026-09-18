@@ -50,171 +50,6 @@ def _clean(s) -> str:
 
 
 
-
-TRADING_ECONOMICS_API = "https://api.tradingeconomics.com"
-
-def _te_key() -> str | None:
-    """Read Trading Economics credentials from Streamlit secrets.
-
-    Preferred format in .streamlit/secrets.toml:
-        TRADING_ECONOMICS_API_KEY = "your-key"
-    Or:
-        TRADING_ECONOMICS_CLIENT = "client:secret"
-    """
-    try:
-        key = st.secrets.get("TRADING_ECONOMICS_API_KEY")
-        if key:
-            return str(key)
-        client = st.secrets.get("TRADING_ECONOMICS_CLIENT")
-        if client:
-            return str(client)
-    except Exception:
-        pass
-    return None
-
-
-def _parse_te_calendar() -> pd.DataFrame:
-    """Fetch Trading Economics calendar data for major markets.
-
-    TE supplies Actual, Previous and Consensus fields. It is used as an
-    enrichment layer; official-source URLs remain attached to existing
-    official events where available.
-    """
-    key = _te_key()
-    if not key:
-        return pd.DataFrame()
-
-    today = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None).normalize()
-    end = today + pd.Timedelta(days=60)
-    countries = {
-        "united states": "United States",
-        "india": "India",
-        "euro area": "Euro Area",
-        "united kingdom": "United Kingdom",
-        "japan": "Japan",
-    }
-
-    rows = []
-    for country_slug, display_country in countries.items():
-        url = f"{TRADING_ECONOMICS_API}/calendar/country/{country_slug}/{today:%Y-%m-%d}/{end:%Y-%m-%d}"
-        try:
-            r = requests.get(url, params={"c": key, "f": "json"}, headers=HEADERS, timeout=20)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
-            continue
-
-        if not isinstance(data, list):
-            continue
-
-        for item in data:
-            try:
-                event = _clean(item.get("Event") or item.get("event"))
-                if not event:
-                    continue
-                dt = pd.to_datetime(item.get("Date") or item.get("date"), errors="coerce")
-                if pd.isna(dt):
-                    continue
-
-                def val(x):
-                    return "—" if x is None or str(x).strip().lower() in ("", "nan", "none") else str(x)
-
-                actual = val(item.get("Actual", item.get("actual")))
-                previous = val(item.get("Previous", item.get("previous")))
-                consensus = val(item.get("Consensus", item.get("consensus")))
-                unit = val(item.get("Unit", item.get("unit")))
-                importance = str(item.get("Importance", item.get("importance", ""))).lower()
-                impact = "High" if importance in {"1", "2", "high"} else ("Medium" if importance in {"3", "medium"} else "Low")
-                category = _clean(item.get("Category") or item.get("category") or "Macro")
-                source_url = item.get("URL") or item.get("url") or f"https://tradingeconomics.com/{country_slug.replace(' ', '-')}/calendar"
-                rows.append({
-                    "date": pd.Timestamp(dt).tz_localize(None) if getattr(dt, "tzinfo", None) else pd.Timestamp(dt),
-                    "time_ist": "See source",
-                    "country": display_country,
-                    "event": event,
-                    "category": "Macro" if category.lower() in {"economic", "macro"} else category,
-                    "impact": impact,
-                    "previous": previous,
-                    "consensus": consensus,
-                    "actual": actual,
-                    "unit": unit,
-                    "source": "Trading Economics",
-                    "source_url": source_url,
-                    "status": "Released" if actual != "—" else "Scheduled",
-                    "id": f"TE-{country_slug}-{pd.Timestamp(dt).date()}-{event}",
-                })
-            except Exception:
-                continue
-
-    return pd.DataFrame(rows).drop_duplicates("id") if rows else pd.DataFrame()
-
-
-def _enrich_events_with_te(out: pd.DataFrame, te: pd.DataFrame) -> pd.DataFrame:
-    """Fill missing event values from TE without overwriting official data.
-
-    Matching is date + normalized event keywords. This intentionally avoids
-    replacing official source attribution or inventing consensus values.
-    """
-    if out.empty or te.empty:
-        return out
-
-    def norm(x):
-        x = str(x).lower()
-        x = re.sub(r"[^a-z0-9]+", " ", x)
-        replacements = {
-            "consumer price index": "cpi",
-            "consumer price index cpi": "cpi",
-            "nonfarm payrolls": "employment",
-            "nonfarm payroll employment change": "employment",
-            "employment situation": "employment",
-            "personal income outlays": "pce",
-        }
-        for a,b in replacements.items():
-            x = x.replace(a,b)
-        return re.sub(r"\s+", " ", x).strip()
-
-    te2 = te.copy()
-    te2["date_only"] = pd.to_datetime(te2["date"]).dt.normalize()
-    te2["norm"] = te2["event"].map(norm)
-
-    for idx, row in out.iterrows():
-        d = pd.Timestamp(row["date"]).normalize()
-        n = norm(row["event"])
-        candidates = te2[(te2["date_only"] == d)]
-        if candidates.empty:
-            continue
-
-        # Score keyword overlap; require at least one meaningful keyword.
-        words = {w for w in n.split() if len(w) > 2}
-        best = None
-        best_score = 0
-        for _, cand in candidates.iterrows():
-            cwords = {w for w in cand["norm"].split() if len(w) > 2}
-            score = len(words & cwords)
-            # Central-bank decision rows often have different names across
-            # providers (e.g. "FOMC Meeting / Decision" vs "Interest Rate Decision").
-            if str(row.get("category", "")).lower() == "central bank":
-                if "fomc" in n and "interest rate decision" in cand["norm"]:
-                    score = max(score, 3)
-                elif "rbi" in n and "interest rate decision" in cand["norm"]:
-                    score = max(score, 3)
-                elif any(x in n for x in ("ecb", "boe", "boj")) and "interest rate decision" in cand["norm"]:
-                    score = max(score, 3)
-            if score > best_score:
-                best_score, best = score, cand
-        if best is None or best_score == 0:
-            continue
-
-        for field in ["previous", "consensus", "actual", "unit"]:
-            current = row.get(field)
-            if current is None or str(current).strip() in ("", "—", "nan", "None"):
-                out.at[idx, field] = best[field]
-
-        if row.get("status") in (None, "", "Scheduled") and best.get("status"):
-            out.at[idx, "status"] = best["status"]
-
-    return out
-
 def _parse_fed_calendar() -> pd.DataFrame:
     """Parse future 2026 FOMC dates directly from the Federal Reserve site."""
     html = _safe_get(FED_CALENDAR_URL)
@@ -521,24 +356,6 @@ def build_event_calendar() -> pd.DataFrame:
 
     out = pd.concat(frames, ignore_index=True)
 
-    # Optional market-consensus enrichment. If no Trading Economics key is
-    # configured, the official schedule remains fully functional and missing
-    # values stay as —.
-    te = _parse_te_calendar()
-    if not te.empty:
-        out = _enrich_events_with_te(out, te)
-
-        # Add TE-only high-value US releases so the calendar contains the
-        # same event rows that carry consensus/actual data.
-        official_ids = set(out["id"].astype(str))
-        te_extra = te[~te["id"].isin(official_ids)].copy()
-        if not te_extra.empty:
-            keep = te_extra["event"].str.contains(
-                r"CPI|PPI|Nonfarm|Employment|GDP|PCE|Retail Sales|ISM|Jobless|Unemployment|Industrial Production|Housing",
-                case=False, na=False, regex=True
-            )
-            out = pd.concat([out, te_extra[keep]], ignore_index=True)
-
     # Add high-value static central-bank meetings when the aggregator is
     # temporarily unavailable. These are linked to official calendars.
     official_fallback = [
@@ -590,7 +407,7 @@ def fetch_market_snapshot() -> pd.DataFrame:
     tickers = {
         "Nifty 50": "^NSEI",
         "S&P 500": "^GSPC",
-        "Nasdaq": "^IXIC",
+        "Nasdaq 100": "^NDX",
         "DXY": "DX-Y.NYB",
         "Gold": "GC=F",
         "Brent Crude": "BZ=F",
